@@ -1,34 +1,62 @@
 #!/bin/bash
+#
+# Create one or more Linux users with a random password.
+#
+# Usage:  sudo ./User_Automation_Script alice bob
+#
+# Each new user gets a random password that must be changed at first login.
+# Passwords are written to a file readable only by the person running the script
+# (not printed to the terminal). Deliver that file securely and delete it afterwards.
 
-if [ $# -eq 0 ]
-then
-    echo "Please enter atleast one username:"
-else
-    
-    for USER in $@
-    do
-        if [[ $USER =~ ^[a-z]+$ ]]
-        then
-            
-            EXISTING_USER=$(cat /etc/passwd | grep -w $USER | cut -d ":" -f 1)
-            echo "entered username: $USER"
-            if [ "${USER}" = "${EXISTING_USER}" ]
-            then
-                echo "$USER already exists, please enter new username"
-                
-            else
-                SPECIAL=$(echo '!@#$%&()_' | fold -w1 | shuf | head -1)
-                PASSWORD="Passw0rd${RANDOM}${SPECIAL}"
-                JUMBLED_PASSWORD=$(echo ${PASSWORD} | fold -w1 | shuf | tr -d "\n")
-                
-                sudo useradd -m -s /bin/bash $USER
-                echo "password is ${JUMBLED_PASSWORD}"
-                echo "$USER:$JUMBLED_PASSWORD" | sudo chpasswd
-                
-            fi
-        else
-            echo "Please enter a valid username, you entered $USER"
-        fi
-    done
-    
+set -u
+
+CREDENTIALS_FILE="${CREDENTIALS_FILE:-./new_user_credentials.txt}"
+
+if [ "$#" -eq 0 ]; then
+    echo "Usage: $0 <username> [username...]"
+    exit 1
 fi
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Please run this script with sudo or as root."
+    exit 1
+fi
+
+# Create the credentials file with restrictive permissions before anything is written to it
+umask 077
+: > "$CREDENTIALS_FILE"
+
+status=0
+
+for USER_NAME in "$@"; do
+    # Lowercase letters, digits, hyphen or underscore; start with a letter; max 32 characters
+    if [[ ! "$USER_NAME" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
+        echo "Skipping invalid username: $USER_NAME"
+        status=1
+        continue
+    fi
+
+    # id -u checks the account database exactly, unlike grep on /etc/passwd
+    if id -u "$USER_NAME" >/dev/null 2>&1; then
+        echo "User $USER_NAME already exists, skipping."
+        status=1
+        continue
+    fi
+
+    # 18 random bytes encoded as base64 (about 24 characters, from a cryptographically secure source)
+    PASSWORD="$(openssl rand -base64 18)"
+
+    if ! useradd -m -s /bin/bash "$USER_NAME"; then
+        echo "Could not create user $USER_NAME"
+        status=1
+        continue
+    fi
+
+    echo "$USER_NAME:$PASSWORD" | chpasswd
+    chage -d 0 "$USER_NAME"   # force a password change at first login
+
+    echo "$USER_NAME:$PASSWORD" >> "$CREDENTIALS_FILE"
+    echo "Created user $USER_NAME (password saved to $CREDENTIALS_FILE)"
+done
+
+exit $status

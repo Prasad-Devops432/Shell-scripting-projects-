@@ -1,34 +1,52 @@
-
 #!/bin/bash
+#
+# List the users who have read (pull) access to a GitHub repository.
+#
+# Requirements: curl, jq
+# Credentials are read from environment variables so they are never stored in the script:
+#   export GITHUB_TOKEN=<a personal access token with repo read permission>
+#
+# Usage:  ./github-api <owner> <repository>
+#         ./github-api octocat Hello-World
 
-# GitHub API URL
+set -euo pipefail
+
 API_URL="https://api.github.com"
 
-# GitHub username and personal access token
-USERNAME=$username
-TOKEN=$token
-
-# User and Repository information
-REPO_OWNER=$1
-REPO_NAME=$2
-
-# Function to make a GET request to the GitHub API
-function github_api_get {
-    local endpoint="$1"
-    local url="${API_URL}/${endpoint}"
-
-    # Send a GET request to the GitHub API with authentication
-    curl -s -u "${USERNAME}:${TOKEN}" "$url"
+usage() {
+    echo "Usage: $0 <repo_owner> <repo_name>"
+    echo "Set GITHUB_TOKEN in your environment before running."
+    exit 1
 }
 
-# Function to list users with read access to the repository
-function list_users_with_read_access {
-    local endpoint="repos/${REPO_OWNER}/${REPO_NAME}/collaborators"
+if [ "$#" -ne 2 ]; then
+    usage
+fi
 
-    # Fetch the list of collaborators on the repository
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+    echo "Error: GITHUB_TOKEN is not set."
+    exit 1
+fi
+
+REPO_OWNER="$1"
+REPO_NAME="$2"
+
+# Send an authenticated GET request and fail on HTTP errors (for example 401, 403 or 404)
+github_api_get() {
+    local endpoint="$1"
+    curl -fsS \
+        -H "Accept: application/vnd.github+json" \
+        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+        "${API_URL}/${endpoint}"
+}
+
+list_users_with_read_access() {
+    # per_page=100 returns up to 100 collaborators per call
+    local endpoint="repos/${REPO_OWNER}/${REPO_NAME}/collaborators?per_page=100"
+    local collaborators
+
     collaborators="$(github_api_get "$endpoint" | jq -r '.[] | select(.permissions.pull == true) | .login')"
 
-    # Display the list of collaborators with read access
     if [[ -z "$collaborators" ]]; then
         echo "No users with read access found for ${REPO_OWNER}/${REPO_NAME}."
     else
@@ -36,16 +54,6 @@ function list_users_with_read_access {
         echo "$collaborators"
     fi
 }
-
-
-function helper {
- expected_cmd_arg=2
- if[ $# -ne $expected_cmd_arg]; then
- echo "Please excute the script with required cmd args"
- echo "asd"
-}
-
-# Main script
 
 echo "Listing users with read access to ${REPO_OWNER}/${REPO_NAME}..."
 list_users_with_read_access
